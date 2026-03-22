@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategic Missile Coverage Analyzer</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+        
+        body {
+            font-family: 'Share Tech Mono', monospace;
+            background: #0a0a0a;
+            color: #00ff41;
+        }
+        
+        #map {
+            height: 100vh;
+            width: 100%;
+            background: #000;
+            z-index: 1;
+        }
+        
+        .hud-panel {
+            background: rgba(10, 20, 10, 0.95);
+            border: 1px solid #00ff41;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-btn {
+            background: rgba(0, 50, 0, 0.8);
+            border: 1px solid #00ff41;
+            color: #00ff41;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .control-btn:hover {
+            background: #00ff41;
+            color: #000;
+            box-shadow: 0 0 15px rgba(0, 255, 65, 0.6);
+        }
+        
+        .control-btn.active {
+            background: #00ff41;
+            color: #000;
+        }
+        
+        .danger-zone {
+            color: #ff0040;
+            border-color: #ff0040;
+        }
+        
+        .danger-zone:hover {
+            background: #ff0040;
+            box-shadow: 0 0 15px rgba(255, 0, 64, 0.6);
+        }
+        
+        /* Radar sweep animation */
+        @keyframes radar {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        .range-circle {
+            fill: rgba(255, 0, 64, 0.1);
+            stroke: #ff0040;
+            stroke-width: 2;
+            stroke-dasharray: 5, 5;
+        }
+        
+        .launch-point {
+            fill: #00ff41;
+            stroke: #fff;
+            stroke-width: 2;
+        }
+        
+        .coverage-area {
+            fill: rgba(255, 0, 64, 0.25);
+            stroke: #ff0040;
+            stroke-width: 1;
+        }
+        
+        .leaflet-popup-content-wrapper {
+            background: rgba(10, 20, 10, 0.95);
+            border: 1px solid #00ff41;
+            color: #00ff41;
+            font-family: 'Share Tech Mono', monospace;
+        }
+        
+        .leaflet-popup-tip {
+            background: #00ff41;
+        }
+        
+        input[type="range"] {
+            accent-color: #00ff41;
+        }
+    </style>
+</head>
+<body class="overflow-hidden">
+
+    <!-- Main Interface -->
+    <div class="relative w-full h-screen">
+        
+        <!-- Map Container -->
+        <div id="map"></div>
+        
+        <!-- HUD Overlay -->
+        <div class="absolute top-4 left-4 z-[1000] w-80 hud-panel rounded-lg p-4 space-y-4">
+            <div class="border-b border-green-500/30 pb-2 mb-2">
+                <h1 class="text-xl font-bold tracking-wider">MISSILE_COVERAGE_V1.0</h1>
+                <p class="text-xs text-green-400/70">BORDER LAUNCH POINT SIMULATION</p>
+            </div>
+            
+            <!-- Missile Configuration -->
+            <div class="space-y-2">
+                <label class="text-xs uppercase tracking-widest">Missile Range (km)</label>
+                <div class="flex items-center gap-2">
+                    <input type="number" id="rangeInput" value="5500" min="100" max="20000" 
+                           class="w-full bg-black/50 border border-green-500/50 rounded px-2 py-1 text-green-400 focus:outline-none focus:border-green-400">
+                </div>
+                <input type="range" id="rangeSlider" min="500" max="15000" value="5500" step="100" 
+                       class="w-full h-1 bg-green-900 rounded-lg appearance-none cursor-pointer">
+            </div>
+            
+            <!-- Country Presets -->
+            <div class="space-y-2">
+                <label class="text-xs uppercase tracking-widest">Border Presets</label>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="loadPreset('russia')" class="control-btn px-3 py-2 rounded text-xs">Russia</button>
+                    <button onclick="loadPreset('usa')" class="control-btn px-3 py-2 rounded text-xs">USA</button>
+                    <button onclick="loadPreset('china')" class="control-btn px-3 py-2 rounded text-xs">China</button>
+                    <button onclick="loadPreset('india')" class="control-btn px-3 py-2 rounded text-xs">India</button>
+                    <button onclick="loadPreset('iran')" class="control-btn px-3 py-2 rounded text-xs">Iran</button>
+                    <button onclick="loadPreset('nkorea')" class="control-btn px-3 py-2 rounded text-xs">N. Korea</button>
+                </div>
+            </div>
+            
+            <!-- Mode Selection -->
+            <div class="space-y-2">
+                <label class="text-xs uppercase tracking-widest">Analysis Mode</label>
+                <div class="flex gap-2">
+                    <button onclick="setMode('individual')" id="btnIndividual" class="control-btn active flex-1 px-3 py-2 rounded text-xs">Individual</button>
+                    <button onclick="setMode('union')" id="btnUnion" class="control-btn flex-1 px-3 py-2 rounded text-xs">Total Coverage</button>
+                </div>
+            </div>
+            
+            <!-- Actions -->
+            <div class="space-y-2 pt-2 border-t border-green-500/30">
+                <button onclick="clearAll()" class="control-btn danger-zone w-full px-3 py-2 rounded text-xs">Clear All Points</button>
+                <button onclick="addRandomBorderPoints()" class="control-btn w-full px-3 py-2 rounded text-xs">Add Random Border Points</button>
+            </div>
+            
+            <!-- Stats -->
+            <div class="text-xs space-y-1 text-green-400/80 border-t border-green-500/30 pt-2">
+                <div class="flex justify-between">
+                    <span>Launch Points:</span>
+                    <span id="pointCount" class="text-white">0</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Coverage Area:</span>
+                    <span id="coverageArea" class="text-white">0 km²</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Max Reach:</span>
+                    <span id="maxReach" class="text-white">0 km</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Instructions -->
+        <div class="absolute bottom-4 right-4 z-[1000] hud-panel rounded-lg p-3 max-w-xs text-xs text-green-400/80">
+            <p class="mb-1"><span class="text-white">CLICK</span> on map to add launch points</p>
+            <p class="mb-1"><span class="text-white">SHIFT+CLICK</span> to remove points</p>
+            <p>Union mode combines all ranges into strategic coverage area</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    
+    <script>
+        // Initialize map with dark theme
+        const map = L.map('map', {
+            center: [20, 0],
+            zoom: 2,
+            minZoom: 2,
+            maxZoom: 10,
+            worldCopyJump: true
+        });
+        
+        // Dark matter tiles for tactical look
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '©OpenStreetMap, ©CartoDB',
+            subdomains: 'abcd',
+            maxZoom: 19
+        }).addTo(map);
+        
+        // State management
+        let launchPoints = [];
+        let rangeCircles = [];
+        let coverageLayer = null;
+        let markers = [];
+        let currentMode = 'individual'; // 'individual' or 'union'
+        let currentRange = 5500;
+        
+        // Country presets - approximate border/launch facility coordinates
+        const presets = {
+            russia: [
+                [55.7558, 37.6173], // Moscow
+                [59.9343, 30.3351], // St Petersburg (Baltic)
+                [52.5200, 85.1800], // Barnaul (South border)
+                [64.7337, 177.5010], // Anadyr (East)
+                [43.1198, 131.8869], // Vladivostok
+                [51.8335, 107.5843], // Ulan-Ude
+                [64.5383, 40.5155], // Severodvinsk (Arctic)
+                [58.0000, 56.0000], // Perm
+                [55.2000, 73.0000], // Omsk
+                [62.0000, 129.0000], // Yakutsk
+            ],
+            usa: [
+                [40.7128, -74.0060], // NYC (East Coast)
+                [34.0522, -118.2437], // LA (West Coast)
+                [47.6062, -122.3321], // Seattle (North West)
+                [25.7617, -80.1918], // Miami (South East)
+                [64.8378, -147.7164], // Fairbanks (Alaska)
+                [21.3099, -157.8581], // Hawaii
+                [29.7604, -95.3698], // Houston (Gulf)
+                [45.5152, -122.6784], // Portland
+                [44.9778, -93.2650], // Minneapolis
+                [32.7157, -117.1611], // San Diego
+            ],
+            china: [
+                [39.9042, 116.4074], // Beijing
+                [31.2304, 121.4737], // Shanghai (East)
+                [23.1291, 113.2644], // Guangzhou (South)
+                [43.8256, 87.6168], // Urumqi (West)
+                [45.7500, 126.6500], // Harbin (North East)
+                [36.0611, 103.8343], // Lanzhou (Center)
+                [29.5630, 106.5516], // Chongqing
+                [38.9140, 121.6147], // Dalian (coastal)
+                [20.0440, 110.1940], // Hainan (South)
+                [40.8414, 111.7519], // Hohhot (North)
+            ],
+            india: [
+                [28.6139, 77.2090], // New Delhi
+                [19.0760, 72.8777], // Mumbai (West)
+                [22.5726, 88.3639], // Kolkata (East)
+                [13.0827, 80.2707], // Chennai (South)
+                [12.9716, 77.5946], // Bangalore
+                [26.9124, 75.7873], // Jaipur (North West)
+                [25.3176, 82.9739], // Varanasi
+                [34.0837, 74.7973], // Srinagar (North)
+            ],
+            iran: [
+                [35.6892, 51.3890], // Tehran
+                [32.6539, 51.6660], // Isfahan
+                [30.6667, 51.5833], // Shiraz (South)
+                [38.0962, 46.2738], // Tabriz (North West)
+                [25.276987, 60.645462], // Chabahar (South East)
+                [37.4747, 57.3333], // Mashhad (North East)
+            ],
+            nkorea: [
+                [39.0392, 125.7625], // Pyongyang
+                [40.6667, 129.2000], // Hamhung (East coast)
+                [38.7333, 125.4000], // Nampo (West coast)
+                [42.0000, 130.0000], // Rason (Far North East)
+                [40.0000, 127.0000], // Wonsan
+            ]
+        };
+        
+        // Range input handling
+        const rangeInput = document.getElementById('rangeInput');
+        const rangeSlider = document.getElementById('rangeSlider');
+        
+        function updateRange(val) {
+            currentRange = parseInt(val);
+            rangeInput.value = currentRange;
+            rangeSlider.value = currentRange;
+            updateVisualization();
+        }
+        
+        rangeInput.addEventListener('change', (e) => updateRange(e.target.value));
+        rangeSlider.addEventListener('input', (e) => updateRange(e.target.value));
+        
+        // Mode switching
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('btnIndividual').classList.toggle('active', mode === 'individual');
+            document.getElementById('btnUnion').classList.toggle('active', mode === 'union');
+            updateVisualization();
+        }
+        
+        // Add launch point
+        function addLaunchPoint(lat, lng) {
+            const id = Date.now() + Math.random();
+            const point = { id, lat, lng };
+            launchPoints.push(point);
+            
+            // Add marker
+            const marker = L.circleMarker([lat, lng], {
+                radius: 6,
+                className: 'launch-point',
+                fillOpacity: 1
+            }).addTo(map);
+            
+            marker.bindPopup(`
+                <div class="text-xs">
+                    <strong>LAUNCH SITE ${launchPoints.length}</strong><br>
+                    LAT: ${lat.toFixed(4)}<br>
+                    LNG: ${lng.toFixed(4)}<br>
+                    RANGE: ${currentRange} km
+                </div>
+            `);
+            
+            markers.push(marker);
+            updateVisualization();
+            updateStats();
+        }
+        
+        // Map click handler
+        map.on('click', (e) => {
+            if (e.originalEvent.shiftKey) {
+                // Find and remove nearest point
+                removeNearestPoint(e.latlng);
+            } else {
+                addLaunchPoint(e.latlng.lat, e.latlng.lng);
+            }
+        });
+        
+        function removeNearestPoint(latlng) {
+            if (launchPoints.length === 0) return;
+            
+            let nearestIdx = -1;
+            let minDist = Infinity;Static Sites Only: GitHub Pages only supports static content (HTML, CSS, JS). You cannot run server-side code like PHP or use databases. 
+            
+            launchPoints.forEach((p, idx) => {
+                const dist = map.distance(latlng, [p.lat, p.lng]);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestIdx = idx;
+                }
+            });
+            
+            if (nearestIdx !== -1 && minDist < 50000) { // Within 50km
+                launchPoints.splice(nearestIdx, 1);
+                map.removeLayer(markers[nearestIdx]);
+                markers.splice(nearestIdx, 1);
+                updateVisualization();
+                updateStats();
+            }
+        }
+        
+        // Calculate and display coverage
+        function updateVisualization() {
+            // Clear existing circles
+            rangeCircles.forEach(c => map.removeLayer(c));
+            rangeCircles = [];
+            
+            if (coverageLayer) {
+                map.removeLayer(coverageLayer);
+                coverageLayer = null;
+            }
+            
+            if (launchPoints.length === 0) return;
+            
+            if (currentMode === 'individual') {
+                // Show individual range circles
+                launchPoints.forEach(point => {
+                    const circle = L.circle([point.lat, point.lng], {
+                        radius: currentRange * 1000, // Convert to meters
+                        className: 'range-circle',
+                        fillOpacity: 0.1,
+                        weight: 1
+                    }).addTo(map);
+                    
+                    rangeCircles.push(circle);
+                });
+            } else {
+                // Calculate union of all ranges using Turf.js
+                const circles = launchPoints.map(p => {
+                    return turf.circle([p.lng, p.lat], currentRange, {
+                        steps: 64,
+                        units: 'kilometers'
+                    });
+                });
+                
+                if (circles.length > 0) {
+                    // Union all circles
+                    let union = circles[0];
+                    for (let i = 1; i < circles.length; i++) {
+                        try {
+                            union = turf.union(union, circles[i]);
+                        } catch (e) {
+                            // If union fails, use feature collection
+                            union = turf.featureCollection([union, circles[i]]);
+                        }
+                    }
+                    
+                    // Add to map
+                    coverageLayer = L.geoJSON(union, {
+                        style: {
+                            fillColor: '#ff0040',
+                            fillOpacity: 0.3,
+                            color: '#ff0040',
+                            weight: 2
+                        }
+                    }).addTo(map);
+                    
+                    // Calculate area
+                    const area = turf.area(union) / 1000000; // Convert to km²
+                    document.getElementById('coverageArea').textContent = 
+                        area > 1000000 ? (area/1000000).toFixed(2) + 'M' : 
+                        area > 1000 ? (area/1000).toFixed(1) + 'k' : 
+                        Math.round(area) + ' km²';
+                }
+            }
+            
+            // Update max reach display
+            const maxReach = calculateMaxReach();
+            document.getElementById('maxReach').textContent = maxReach.toFixed(0) + ' km';
+        }
+        
+        function calculateMaxReach() {
+            if (launchPoints.length === 0) return 0;
+            // Simple calculation: range + furthest distance between any two points / 2
+            // This is a rough approximation of strategic depth
+            let maxDist = 0;
+            for (let i = 0; i < launchPoints.length; i++) {
+                for (let j = i + 1; j < launchPoints.length; j++) {
+                    const dist = turf.distance(
+                        [launchPoints[i].lng, launchPoints[i].lat],
+                        [launchPoints[j].lng, launchPoints[j].lat],
+                        { units: 'kilometers' }
+                    );
+                    if (dist > maxDist) maxDist = dist;
+                }
+            }
+            return currentRange + (maxDist / 2);
+        }
+        
+        function updateStats() {
+            document.getElementById('pointCount').textContent = launchPoints.length;
+            if (currentMode === 'individual') {
+                // Calculate approximate total area (simplified sum of circles minus overlap estimate)
+                const singleArea = Math.PI * Math.pow(currentRange, 2);
+                const totalArea = singleArea * launchPoints.length;
+                document.getElementById('coverageArea').textContent = 
+                    totalArea > 1000000 ? (totalArea/1000000).toFixed(2) + 'M' : 
+                    (totalArea/1000).toFixed(1) + 'k km²';
+            }
+        }
+        
+        // Load preset border points
+        function loadPreset(country) {
+            clearAll();
+            const points = presets[country];
+            if (points) {
+                points.forEach(coord => {
+                    addLaunchPoint(coord[0], coord[1]);
+                });
+                
+                // Fit bounds
+                const group = new L.featureGroup(markers);
+                map.fitBounds(group.getBounds().pad(0.2));
+            }
+        }
+        
+        // Add random border points for demonstration
+        function addRandomBorderPoints() {
+            const bounds = map.getBounds();
+            const count = 5;
+            
+            for (let i = 0; i < count; i++) {
+                const lat = bounds.getSouth() + Math.random() * (bounds.getNorth() - bounds.getSouth());
+                const lng = bounds.getWest() + Math.random() * (bounds.getEast() - bounds.getWest());
+                addLaunchPoint(lat, lng);
+            }
+        }
+        
+        function clearAll() {
+            launchPoints = [];
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            rangeCircles.forEach(c => map.removeLayer(c));
+            rangeCircles = [];
+            if (coverageLayer) {
+                map.removeLayer(coverageLayer);
+                coverageLayer = null;
+            }
+            updateStats();
+            document.getElementById('coverageArea').textContent = '0 km²';
+            document.getElementById('maxReach').textContent = '0 km';
+        }
+        
+        // Initialize with example
+        window.onload = () => {
+            // Optional: load a demo
+            // loadPreset('russia');
+        };
+    </script>
+</body>
+</html>
